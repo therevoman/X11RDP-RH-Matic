@@ -28,7 +28,7 @@ LINE="----------------------------------------------------------------------"
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 # xrdp repository
-GH_ACCOUNT=therevoman
+GH_ACCOUNT=neutrinolabs
 GH_PROJECT=xrdp
 GH_BRANCH=master
 GH_URL=https://github.com/${GH_ACCOUNT}/${GH_PROJECT}.git
@@ -181,7 +181,6 @@ fetch()
 	WRKSRC=${GH_ACCOUNT}-${GH_PROJECT}-${GH_COMMIT}
 	DISTFILE=${WRKSRC}.tar.gz
 	echo -n 'Fetching source code...' 
-	echo -n "git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} "
 
 	if [ ! -f ${SOURCE_DIR}/${DISTFILE} ]; then
 		git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} >> $BUILD_LOG 2>&1 && \
@@ -205,7 +204,7 @@ librfxcodec_build()
 		wget \
 			--quiet \
 			--output-document=${SOURCE_DIR}/${LIBRFXFILE} \
-			https://github.com/therevoman/librfxcodec/archive/devel.zip && \
+			https://github.com/neutrinolabs/librfxcodec/archive/devel.zip && \
 		echo 'librfxcodec done'
 	else
 		echo 'librfxcodec already exists'
@@ -218,7 +217,7 @@ librfxcodec_build()
 	(
     cd ${WRKDIR}/${WRKSRC} 
     echo "extracting ${SOURCE_DIR}/${LIBRFXFILE}" 
-	  unzip ${SOURCE_DIR}/${LIBRFXFILE} 
+	  unzip ${SOURCE_DIR}/${LIBRFXFILE} >> $BUILD_LOG 2>&1
     echo "rename librfxcodec-devel to librfxcodec" 
     mv librfxcodec-devel librfxcodec 
 	  cd ${WRKDIR}/${WRKSRC}/librfxcodec 
@@ -253,11 +252,13 @@ x11rdp_dirty_build()
 	# copy patch files
 	#SUDO_CMD cp ${SOURCE_DIR}/xorg-server-1.16.0.patch ${WRKDIR}/${WRKSRC}/xorg/X11R7.6/
 
+  echo "SOURCE_DIR: ${SOURCE_DIR}"
+
 	# build x11rdp once into $X11RDPBASE
 	(
 	cd ${WRKDIR}/${WRKSRC}/xorg/X11R7.6 && \
-	patch --forward -p2 < ${SOURCE_DIR}/buildx_patch.diff >> $BUILD_LOG 2>&1 ||: && \
-	patch --forward -p2 < ${SOURCE_DIR}/x11_file_list.patch2 >> $BUILD_LOG 2>&1 ||: && \
+	patch --forward -p2 < SOURCES/buildx_patch.diff >> $BUILD_LOG 2>&1 ||: && \
+	patch --forward -p2 < SOURCES/x11_file_list.patch2 >> $BUILD_LOG 2>&1 ||: && \
 	sed -i.bak \
 		-e 's/if ! mkdir $PREFIX_DIR/if ! mkdir -p $PREFIX_DIR/' \
 		-e 's/wget -cq/wget -cq --retry-connrefused --waitretry=10/' \
@@ -389,8 +390,11 @@ OPTIONS
 			 	echo_stderr "Invalid working directory '${2}' specified."
 				exit 1
 			fi
+      echo "forcing directory ${2}.X11RDP-RH-Matic"
+      mkdir -p ${2}.X11RDP-RH-Matic
 			OLDWRKDIR=${WRKDIR}
 			WRKDIR=$(mktemp --directory --suffix .X11RDP-RH-Matic --tmpdir="${2}") || exit 1
+			WRKDIR=${2}.X11RDP-RH-Matic
 			YUM_LOG=${WRKDIR}/yum.log
 			BUILD_LOG=${WRKDIR}/build.log
 			SUDO_LOG=${WRKDIR}/sudo.log
