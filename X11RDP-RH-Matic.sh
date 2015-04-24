@@ -28,10 +28,11 @@ LINE="----------------------------------------------------------------------"
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 # xrdp repository
-GH_ACCOUNT=neutrinolabs
+GH_ACCOUNT=therevoman
 GH_PROJECT=xrdp
 GH_BRANCH=master
 GH_URL=https://github.com/${GH_ACCOUNT}/${GH_PROJECT}.git
+GH_LIBRFXCODEC_PROJECT=librfxcodec
 
 WRKDIR=$(mktemp --directory --suffix .X11RDP-RH-Matic)
 YUM_LOG=${WRKDIR}/yum.log
@@ -53,6 +54,8 @@ XRDP_CONFIGURE_ARGS="--enable-fuse"
 XORG_DRIVER_DEPENDS=$(<SPECS/xorg-x11-drv-rdp.spec.in grep Requires: | grep -v %% | awk '{ print $2 }')
 # x11rdp
 X11RDP_BUILD_DEPENDS=$(<SPECS/x11rdp.spec.in grep BuildRequires: | awk '{ print $2 }')
+# librfxcodec
+LIBRFXCODEC_DEPENDS="autoconf automake libtool make libjpeg libjpeg-devel"
 
 SUDO_CMD()
 {
@@ -177,7 +180,8 @@ fetch()
 {
 	WRKSRC=${GH_ACCOUNT}-${GH_PROJECT}-${GH_COMMIT}
 	DISTFILE=${WRKSRC}.tar.gz
-	echo -n 'Fetching source code... '
+	echo -n 'Fetching source code...' 
+	echo -n "git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} "
 
 	if [ ! -f ${SOURCE_DIR}/${DISTFILE} ]; then
 		git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} >> $BUILD_LOG 2>&1 && \
@@ -188,6 +192,41 @@ fetch()
 	else
 		echo 'already exists'
 	fi
+}
+
+librfxcodec_build()
+{
+	# https://github.com/therevoman/librfxcodec/archive/$GH_BRANCH.zip
+	LIBRFXSRC=${GH_ACCOUNT}-${GH_LIBRFXCODEC_PROJECT}-${GH_COMMIT}
+	LIBRFXFILE=${LIBRFXSRC}.zip
+  echo "fetching https://github.com/therevoman/librfxcodec/archive/devel.zip"
+	echo -n 'Fetching librfxcodec source code... '
+	if [ ! -f ${SOURCE_DIR}/${LIBRFXFILE} ]; then
+		wget \
+			--quiet \
+			--output-document=${SOURCE_DIR}/${LIBRFXFILE} \
+			https://github.com/therevoman/librfxcodec/archive/devel.zip && \
+		echo 'librfxcodec done'
+	else
+		echo 'librfxcodec already exists'
+	fi
+
+	echo "building librfxcodec in ${WRKDIR}/${WRKSRC}/librfxcodec"
+
+	mkdir -p ${WRKDIR}/${WRKSRC}
+	# build librfxcodec once into xrdp/librfxcodec
+	(
+    cd ${WRKDIR}/${WRKSRC} 
+    echo "extracting ${SOURCE_DIR}/${LIBRFXFILE}" 
+	  unzip ${SOURCE_DIR}/${LIBRFXFILE} 
+    echo "rename librfxcodec-devel to librfxcodec" 
+    mv librfxcodec-devel librfxcodec 
+	  cd ${WRKDIR}/${WRKSRC}/librfxcodec 
+		make >> $BUILD_LOG 2>&1 
+  ) || error_exit
+	 
+
+	echo 'librfxcodec compiled'
 }
 
 x11rdp_dirty_build()
@@ -208,11 +247,17 @@ x11rdp_dirty_build()
 	# extract xrdp source
 	tar zxf ${SOURCE_DIR}/${DISTFILE} -C $WRKDIR || error_exit
 
+	# copy downloads from existing folder
+	SUDO_CMD cp -R downloads ${WRKDIR}/${WRKSRC}/xorg/X11R7.6/
+  
+	# copy patch files
+	#SUDO_CMD cp ${SOURCE_DIR}/xorg-server-1.16.0.patch ${WRKDIR}/${WRKSRC}/xorg/X11R7.6/
+
 	# build x11rdp once into $X11RDPBASE
 	(
 	cd ${WRKDIR}/${WRKSRC}/xorg/X11R7.6 && \
 	patch --forward -p2 < ${SOURCE_DIR}/buildx_patch.diff >> $BUILD_LOG 2>&1 ||: && \
-	patch --forward -p2 < ${SOURCE_DIR}/x11_file_list.patch >> $BUILD_LOG 2>&1 ||: && \
+	patch --forward -p2 < ${SOURCE_DIR}/x11_file_list.patch2 >> $BUILD_LOG 2>&1 ||: && \
 	sed -i.bak \
 		-e 's/if ! mkdir $PREFIX_DIR/if ! mkdir -p $PREFIX_DIR/' \
 		-e 's/wget -cq/wget -cq --retry-connrefused --waitretry=10/' \
@@ -249,6 +294,7 @@ build_rpm()
 	for f in $TARGETS; do
 		echo -n "Building ${f}... "
 		case "${f}" in
+			librfxcodec) librfxcodec_build || error_exit ;;
 			xrdp) QA_RPATHS=$[0x0001] rpmbuild -ba ${WRKDIR}/${f}.spec >> $BUILD_LOG 2>&1 || error_exit ;;
 			x11rdp) x11rdp_dirty_build || error_exit ;;
 			*) rpmbuild -ba ${WRKDIR}/${f}.spec >> $BUILD_LOG 2>&1 || error_exit ;;
@@ -282,6 +328,7 @@ OPTIONS
   --noinstall        : do not install anything, just build the packages
   --nox11rdp         : do not build and install x11rdp
   --withjpeg         : include jpeg module
+  --with-librfxcodec : build and install the librfxcodec from neutrinolabs
   --with-xorg-driver : build and install xorg-driver
   --tmpdir <dir>     : specify working directory prefix (/tmp is default)"
 		get_branches
@@ -331,6 +378,12 @@ OPTIONS
 			XRDP_CONFIGURE_ARGS="$XRDPCONFIGURE_ARGS --enable-jpeg"
 			XRDP_BUILD_DEPENDS="$XRDP_BUILD_DEPENDS libjpeg-devel"
 			;;
+    
+		--with-librfxcodec)
+		  TARGETS="librfxcodec $TARGETS"
+				XRDP_CONFIGURE_ARGS="$XRDPCONFIGURE_ARGS --enable-librfxcodec"
+		  ;;
+
 		--tmpdir)
 			if [ ! -d "${2}" ]; then
 			 	echo_stderr "Invalid working directory '${2}' specified."
@@ -409,6 +462,7 @@ install_targets_depends()
 {
 	for t in $TARGETS; do
 		case "$t" in
+			librfxcodec) install_depends $LIBRFXCODEC_DEPENDS ;;
 			xrdp) install_depends $XRDP_BUILD_DEPENDS ;;
 			x11rdp) install_depends $X11RDP_BUILD_DEPENDS ;;
 			xorg-x11-drv-rdp) install_depends $XORG_DRIVER_DEPENDS ;;
