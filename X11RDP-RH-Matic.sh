@@ -33,6 +33,9 @@ GH_PROJECT=xrdp
 GH_BRANCH=master
 GH_URL=https://github.com/${GH_ACCOUNT}/${GH_PROJECT}.git
 GH_LIBRFXCODEC_PROJECT=librfxcodec
+GH_LIBRFXCODEC_URL=https://github.com/${GH_ACCOUNT}/${GH_LIBRFXCODEC_PROJECT}.git
+GH_XORGXRDP_PROJECT=xorgxrdp
+GH_XORGXRDP_URL=https://github.com/${GH_ACCOUNT}/${GH_XORGXRDP_PROJECT}.git
 
 WRKDIR=$(mktemp --directory --suffix .X11RDP-RH-Matic)
 YUM_LOG=${WRKDIR}/yum.log
@@ -55,7 +58,7 @@ XORG_DRIVER_DEPENDS=$(<SPECS/xorg-x11-drv-rdp.spec.in grep Requires: | grep -v %
 # x11rdp
 X11RDP_BUILD_DEPENDS=$(<SPECS/x11rdp.spec.in grep BuildRequires: | awk '{ print $2 }')
 # librfxcodec
-LIBRFXCODEC_DEPENDS="autoconf automake libtool make libjpeg libjpeg-devel"
+LIBRFXCODEC_DEPENDS="autoconf automake libtool make libjpeg-turbo libjpeg-turbo-devel"
 
 SUDO_CMD()
 {
@@ -181,13 +184,20 @@ fetch()
 	WRKSRC=${GH_ACCOUNT}-${GH_PROJECT}-${GH_COMMIT}
 	DISTFILE=${WRKSRC}.tar.gz
 	echo -n 'Fetching source code...' 
+	echo "        git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} >> $BUILD_LOG 2>&1 && \
+        git clone ${GH_LIBRFXCODEC_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC}/${GH_LIBRFXCODEC_PROJECT} >> $BUILD_LOG 2>&1 && \
+        git clone ${GH_XORGXRDP_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC}/${GH_XORGXRDP_PROJECT} >> $BUILD_LOG 2>&1 && \
+        tar cfz ${WRKDIR}/${DISTFILE} -C ${WRKDIR} ${WRKSRC} && \
+        cp -a ${WRKDIR}/${DISTFILE} ${SOURCE_DIR}/${DISTFILE}"
 
 	if [ ! -f ${SOURCE_DIR}/${DISTFILE} ]; then
-		git clone --recursive ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} >> $BUILD_LOG 2>&1 && \
-		tar cfz ${WRKDIR}/${DISTFILE} -C ${WRKDIR} ${WRKSRC} && \
-		cp -a ${WRKDIR}/${DISTFILE} ${SOURCE_DIR}/${DISTFILE} || error_exit
-
-		echo 'done'
+        git clone ${GH_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC} >> $BUILD_LOG 2>&1 && \
+        git clone --recursive ${GH_LIBRFXCODEC_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC}/${GH_LIBRFXCODEC_PROJECT} >> $BUILD_LOG 2>&1 && \
+        git clone --recursive ${GH_XORGXRDP_URL} --branch ${GH_BRANCH} ${WRKDIR}/${WRKSRC}/${GH_XORGXRDP_PROJECT} >> $BUILD_LOG 2>&1 && \
+        tar cfz ${WRKDIR}/${DISTFILE} -C ${WRKDIR} ${WRKSRC} && \
+        cp -a ${WRKDIR}/${DISTFILE} ${SOURCE_DIR}/${DISTFILE} || error_exit
+ 
+        echo 'done'
 	else
 		echo 'already exists'
 	fi
@@ -199,7 +209,7 @@ librfxcodec_build()
 	LIBRFXSRC=${GH_ACCOUNT}-${GH_LIBRFXCODEC_PROJECT}-${GH_COMMIT}
 	LIBRFXFILE=${LIBRFXSRC}.zip
   echo "fetching https://github.com/therevoman/librfxcodec/archive/devel.zip"
-	echo -n 'Fetching librfxcodec source code... '
+	echo -n 'Fetching librfxcodec source code... ${SOURCE_DIR}/${LIBRFXFILE}'
 	if [ ! -f ${SOURCE_DIR}/${LIBRFXFILE} ]; then
 		wget \
 			--quiet \
@@ -252,13 +262,14 @@ x11rdp_dirty_build()
 	# copy patch files
 	#SUDO_CMD cp ${SOURCE_DIR}/xorg-server-1.16.0.patch ${WRKDIR}/${WRKSRC}/xorg/X11R7.6/
 
-  echo "SOURCE_DIR: ${SOURCE_DIR}"
+	echo "SOURCE_DIR: ${SOURCE_DIR}"
+	TSCRIPTDIR=$(dirname $(readlink -f $0))
 
 	# build x11rdp once into $X11RDPBASE
 	(
 	cd ${WRKDIR}/${WRKSRC}/xorg/X11R7.6 && \
-	patch --forward -p2 < SOURCES/buildx_patch.diff >> $BUILD_LOG 2>&1 ||: && \
-	patch --forward -p2 < SOURCES/x11_file_list.patch2 >> $BUILD_LOG 2>&1 ||: && \
+	patch --forward < ${TSCRIPTDIR}/SOURCES/buildx_patch.diff >> $BUILD_LOG 2>&1 ||: && \
+	patch --forward < ${TSCRIPTDIR}/SOURCES/x11_file_list.patch2 >> $BUILD_LOG 2>&1 ||: && \
 	sed -i.bak \
 		-e 's/if ! mkdir $PREFIX_DIR/if ! mkdir -p $PREFIX_DIR/' \
 		-e 's/wget -cq/wget -cq --retry-connrefused --waitretry=10/' \
@@ -295,7 +306,6 @@ build_rpm()
 	for f in $TARGETS; do
 		echo -n "Building ${f}... "
 		case "${f}" in
-			librfxcodec) librfxcodec_build || error_exit ;;
 			xrdp) QA_RPATHS=$[0x0001] rpmbuild -ba ${WRKDIR}/${f}.spec >> $BUILD_LOG 2>&1 || error_exit ;;
 			x11rdp) x11rdp_dirty_build || error_exit ;;
 			*) rpmbuild -ba ${WRKDIR}/${f}.spec >> $BUILD_LOG 2>&1 || error_exit ;;
@@ -377,12 +387,12 @@ OPTIONS
 
 		--withjpeg)
 			XRDP_CONFIGURE_ARGS="$XRDPCONFIGURE_ARGS --enable-jpeg"
-			XRDP_BUILD_DEPENDS="$XRDP_BUILD_DEPENDS libjpeg-devel"
+			XRDP_BUILD_DEPENDS="$XRDP_BUILD_DEPENDS libjpeg-turbo-devel"
 			;;
     
 		--with-librfxcodec)
-		  TARGETS="librfxcodec $TARGETS"
-				XRDP_CONFIGURE_ARGS="$XRDPCONFIGURE_ARGS --enable-librfxcodec"
+		  #TARGETS="librfxcodec $TARGETS"
+			XRDP_CONFIGURE_ARGS="$XRDPCONFIGURE_ARGS --enable-librfxcodec"
 		  ;;
 
 		--tmpdir)
